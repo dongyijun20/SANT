@@ -52,7 +52,8 @@ a4_width <- 8.27
 fig2_height <- 7.2
 fig3_height <- 9.2
 fig4_height <- 10.0
-fig5_height <- 10.2
+fig5_height <- 8.0
+figS_height <- 10.0
 
 arrange_with_panel_labels <- function(plot_list, ncol = 1, nrow = NULL) {
   n_plot <- length(plot_list)
@@ -67,6 +68,43 @@ arrange_with_panel_labels <- function(plot_list, ncol = 1, nrow = NULL) {
     vjust = 1.2,
     align = "hv"
   )
+}
+
+arrange_two_plus_one <- function(pA, pB, pC) {
+  p_blank <- ggplot() + theme_void()
+  ggpubr::ggarrange(
+    plotlist = list(pA, pB, pC, p_blank),
+    ncol = 2,
+    nrow = 2,
+    labels = c("A", "B", "C", ""),
+    font.label = list(size = 18, face = "bold", family = plot_font_family),
+    hjust = -0.15,
+    vjust = 1.2,
+    align = "hv"
+  )
+}
+
+arrange_two_plus_one_compact <- function(pA, pB, pC, bottom_height = 0.82) {
+  p_blank <- ggplot() + theme_void()
+  top_row <- ggpubr::ggarrange(
+    pA, pB,
+    ncol = 2,
+    labels = c("A", "B"),
+    font.label = list(size = 18, face = "bold", family = plot_font_family),
+    hjust = -0.15,
+    vjust = 1.2,
+    align = "hv"
+  )
+  bottom_row <- ggpubr::ggarrange(
+    pC, p_blank,
+    ncol = 2,
+    labels = c("C", ""),
+    font.label = list(size = 18, face = "bold", family = plot_font_family),
+    hjust = -0.15,
+    vjust = 1.2,
+    align = "hv"
+  )
+  ggpubr::ggarrange(top_row, bottom_row, ncol = 1, heights = c(1, bottom_height))
 }
 
 # Load data
@@ -451,14 +489,14 @@ plot_proportion <- function(data, var, title) {
   # Safety normalization to ensure NA/Missing are unified even after downstream recoding
   data[[var]] <- fill_missing(data[[var]])
   
-  # Force Missing to be the bottom segment in stacked bars
+  # Force Missing to be the top segment in stacked bars (last level)
   if(is.factor(data[[var]])) {
     lv <- levels(data[[var]])
     lv_non_missing <- lv[lv != "Missing"]
   } else {
     lv_non_missing <- sort(unique(data[[var]][data[[var]] != "Missing"]))
   }
-  data[[var]] <- factor(data[[var]], levels = c("Missing", lv_non_missing))
+  data[[var]] <- factor(data[[var]], levels = c(lv_non_missing, "Missing"))
   
   # Compute within-group proportions
   plot_data <- data %>%
@@ -837,7 +875,7 @@ if(!is.null(model_df)) {
     )
     
     boot_df_plot <- data.frame(AUC = auc_boot)
-    p_boot <- ggplot(boot_df_plot, aes(x = AUC)) +
+    p_boot_plot <- ggplot(boot_df_plot, aes(x = AUC)) +
       geom_histogram(bins = 30, fill = "#3498DB", color = "white", alpha = 0.85) +
       geom_vline(xintercept = auc_model, color = "#E74C3C", linetype = "dashed", linewidth = 1) +
       geom_vline(xintercept = quantile(auc_boot, c(0.025, 0.975)), color = "#2C3E50", linetype = "dotted", linewidth = 0.9) +
@@ -854,8 +892,8 @@ if(!is.null(model_df)) {
       ) +
       theme(plot.title = element_text(hjust = 0.5, face = "bold"))
     
-    ggsave("figures/Figure_Bootstrap_AUC_Stability.pdf", p_boot, width = 8, height = 6)
-    ggsave("figures/supplementary/Figure_Bootstrap_AUC_Stability.pdf", p_boot, width = 8, height = 6)
+    ggsave("figures/Figure_Bootstrap_AUC_Stability.pdf", p_boot_plot, width = 8, height = 6)
+    ggsave("figures/supplementary/Figure_Bootstrap_AUC_Stability.pdf", p_boot_plot, width = 8, height = 6)
     write.csv(boot_summary, "figures/Bootstrap_AUC_Summary.csv", row.names = FALSE)
   }
 }
@@ -864,8 +902,8 @@ if(!is.null(model_df)) {
 # Part 8: Final layout exports (Main vs Supplementary)
 # ==============================================================================
 
-# Figure 4 (main): diagnostic framework in portrait A4
-if(exists("p_model_roc")) {
+# Figure 4 (main): diagnostic framework in portrait A4 (no combined model panel)
+if(exists("p_corr1") && exists("roc_plot") && exists("p_scatter")) {
   p4a_main <- p_corr1 +
     theme_pub_a4() +
     theme(legend.position = "top") +
@@ -881,19 +919,19 @@ if(exists("p_model_roc")) {
       subtitle = "Spleen size with 16 cm clinical cutoff"
     )
   
-  p4c_main <- p_model_roc +
+  p4c_main <- p_scatter +
     theme_pub_a4() +
     labs(
-      title = "Combined-Model ROC",
-      subtitle = paste0("Predictors: ", paste(model_vars, collapse = " + "))
+      title = "Lesion vs Spleen Size",
+      subtitle = "16 cm threshold highlights splenic-burden separation"
     )
   
-  fig4_main <- arrange_with_panel_labels(list(p4a_main, p4b_main, p4c_main), ncol = 1, nrow = 3)
+  fig4_main <- arrange_two_plus_one(p4a_main, p4b_main, p4c_main)
   ggsave("figures/main/Figure4_Diagnostic_Framework.pdf", fig4_main, width = a4_width, height = fig4_height)
 }
 
 # ==============================================================================
-# Part 9: Figure 5 (Nomogram + Calibration + DCA)
+# Part 9: Exploratory model utilities for supplementary figures
 # ==============================================================================
 if(exists("fit_model") && !is.null(model_df) && !is.null(model_vars)) {
   # Panel A: points-based nomogram representation
@@ -921,12 +959,12 @@ if(exists("fit_model") && !is.null(model_df) && !is.null(model_vars)) {
   
   p5a_nomogram <- ggplot(nom_df, aes(y = Variable)) +
     geom_segment(aes(x = 0, xend = 1, yend = Variable), linewidth = 0.8, color = "#2C3E50") +
-    geom_text(aes(x = -0.05, label = sprintf("min %.2f", MinValue)), hjust = 1, size = 2.6, family = plot_font_family) +
-    geom_text(aes(x = 1.05, label = sprintf("max %.2f", MaxValue)), hjust = 0, size = 2.6, family = plot_font_family) +
+    geom_text(aes(x = 0, label = sprintf("min %.2f", MinValue)), hjust = 1.05, vjust = 1.2, size = 2.6, family = plot_font_family) +
+    geom_text(aes(x = 1, label = sprintf("max %.2f", MaxValue)), hjust = -0.05, vjust = 1.2, size = 2.6, family = plot_font_family) +
     geom_point(aes(x = 0.5, size = MaxPoints), color = "#8E44AD", alpha = 0.85) +
     geom_text(aes(x = 0.5, label = paste0(round(MaxPoints, 1), " pts")), vjust = -1.2, size = 2.5, family = plot_font_family) +
     scale_size_continuous(range = c(2.5, 7), guide = "none") +
-    coord_cartesian(xlim = c(-0.25, 1.25)) +
+    coord_cartesian(xlim = c(-0.2, 1.2)) +
     theme_pub_a4() +
     labs(
       title = "Nomogram Representation",
@@ -981,7 +1019,7 @@ if(exists("fit_model") && !is.null(model_df) && !is.null(model_vars)) {
     geom_line(linewidth = 0.9) +
     scale_color_manual(values = c("Ideal" = "grey45", "Apparent" = "#E74C3C", "Bias-corrected" = "#2C3E50")) +
     theme_pub_a4() +
-    coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
+    coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
     labs(
       title = "Calibration",
       subtitle = "Bootstrap-corrected calibration curve",
@@ -1026,8 +1064,17 @@ if(exists("fit_model") && !is.null(model_df) && !is.null(model_vars)) {
       linetype = ""
     )
   
-  fig5_main <- arrange_with_panel_labels(list(p5a_nomogram, p5b_cal, p5c_dca), ncol = 1, nrow = 3)
-  ggsave("figures/main/Figure5_Clinical_Utility.pdf", fig5_main, width = a4_width, height = fig5_height)
+  fig5_supp <- arrange_two_plus_one_compact(p5a_nomogram, p5b_cal, p5c_dca, bottom_height = 0.78)
+  ggsave(
+    "figures/supplementary/Supplementary_FigureS4_Clinical_Utility_Exploratory.pdf",
+    fig5_supp,
+    width = a4_width,
+    height = fig5_height
+  )
+  
+  # Remove outdated main-figure export to avoid manuscript confusion
+  old_fig5_main <- "figures/main/Figure5_Clinical_Utility.pdf"
+  if(file.exists(old_fig5_main)) file.remove(old_fig5_main)
 }
 
 # Writing guidance file to align legend style and result flow
@@ -1036,14 +1083,87 @@ layout_notes <- c(
   "Figure 1: Representative imaging cases (clinical phenotype).",
   "Figure 2: Significant comparisons (age, spleen size, spleen weight, Ki-67).",
   "Figure 3: Unified feature proportions (all proportion panels; Missing/NA harmonized).",
-  "Figure 4: Diagnostic framework = measurement correlation + spleen-size ROC + combined-model ROC.",
-  "Figure 5: Clinical utility = nomogram + calibration + decision curve analysis.",
+  "Figure 4: Diagnostic framework = measurement correlation + spleen-size ROC + lesion-vs-spleen threshold scatter.",
   "",
   "Supplementary Figures",
-  "S1: ROC comparison across continuous predictors.",
-  "S2: Bootstrap AUC stability for combined model.",
+  "S1: ROC comparison across continuous predictors (single panel, readability-prioritized).",
+  "S2: Odds-ratio forest + bootstrap AUC stability (adaptive stacked layout).",
+  "S3: Correlation analysis extension (measurement + burden effects).",
+  "S4: Exploratory model utility panels (nomogram + calibration + decision curve analysis).",
   "",
   "Results paragraph order",
-  "1) Qualitative imaging distinction -> 2) quantitative group differences -> 3) diagnostic model performance -> 4) clinical utility -> 5) robustness (supplementary)."
+  "1) Qualitative imaging distinction -> 2) quantitative group differences -> 3) diagnostic framework without multivariable model dependence -> 4) exploratory model utilities in supplementary."
 )
 writeLines(layout_notes, "figures/main/Figure_Layout_and_Legend_Notes.txt")
+
+# Clean legacy supplementary export to prevent stale-file confusion
+legacy_supp <- "figures/supplementary/Supplementary_Figure1_Diagnostic_Extensions.pdf"
+if(file.exists(legacy_supp)) file.remove(legacy_supp)
+
+# ==============================================================================
+# Part 10: Supplementary figure layout (adaptive, readability-first)
+# ==============================================================================
+if(exists("p_roc_multi")) {
+  s1_roc <- p_roc_multi +
+    theme_pub_a4() +
+    labs(
+      title = "Supplementary Figure S1. ROC Comparison Across Continuous Predictors",
+      subtitle = "Single-panel layout to preserve curve and legend readability"
+    )
+  ggsave(
+    "figures/supplementary/Supplementary_FigureS1_ROC_Comparison.pdf",
+    s1_roc,
+    width = a4_width,
+    height = 6.0
+  )
+}
+
+if(exists("p_or") && exists("p_boot_plot")) {
+  s2_or <- p_or +
+    theme_pub_a4() +
+    labs(
+      title = "Supplementary Figure S2A. Odds-Ratio Forest",
+      subtitle = "Univariable categorical-feature effects"
+    )
+  s2_boot <- p_boot_plot +
+    theme_pub_a4() +
+    labs(
+      title = "Supplementary Figure S2B. Bootstrap AUC Stability",
+      subtitle = "Internal robustness of combined model"
+    )
+  s2_combo <- ggpubr::ggarrange(
+    s2_or, s2_boot,
+    ncol = 1,
+    labels = c("A", "B"),
+    font.label = list(size = 18, face = "bold", family = plot_font_family),
+    hjust = -0.15,
+    vjust = 1.2,
+    heights = c(1.15, 1.0),
+    align = "v"
+  )
+  ggsave(
+    "figures/supplementary/Supplementary_FigureS2_OR_Bootstrap.pdf",
+    s2_combo,
+    width = a4_width,
+    height = 8.2
+  )
+}
+
+if(exists("p_corr2") && exists("p_scatter")) {
+  s3_corr <- ggpubr::ggarrange(
+    p_corr2 + theme_pub_a4() + labs(title = "Tumor Burden Effect by Group"),
+    p_scatter + theme_pub_a4() + labs(title = "Lesion vs Spleen Size with 16 cm Threshold"),
+    ncol = 1,
+    labels = c("A", "B"),
+    font.label = list(size = 18, face = "bold", family = plot_font_family),
+    hjust = -0.15,
+    vjust = 1.2,
+    heights = c(1, 1)
+  )
+  ggsave(
+    "figures/supplementary/Supplementary_FigureS3_Correlations.pdf",
+    s3_corr,
+    width = a4_width,
+    height = 8.2
+  )
+}
