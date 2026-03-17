@@ -20,6 +20,55 @@ library(pROC)
 library(tidyr)
 library(dplyr)
 
+if(!dir.exists("figures")) dir.create("figures", recursive = TRUE)
+if(!dir.exists("figures/main")) dir.create("figures/main", recursive = TRUE)
+if(!dir.exists("figures/supplementary")) dir.create("figures/supplementary", recursive = TRUE)
+
+# Publication style helpers (Arial, title=10, body=8)
+plot_font_family <- "Arial"
+can_use_arial <- tryCatch({
+  tf <- tempfile(fileext = ".pdf")
+  grDevices::pdf(tf, family = "Arial")
+  plot.new()
+  dev.off()
+  TRUE
+}, error = function(e) FALSE)
+if(!can_use_arial) plot_font_family <- "sans"
+
+theme_pub_a4 <- function() {
+  theme_classic(base_family = plot_font_family, base_size = 8) +
+    theme(
+      plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(size = 8, hjust = 0.5),
+      axis.title = element_text(size = 8),
+      axis.text = element_text(size = 8),
+      legend.title = element_text(size = 8),
+      legend.text = element_text(size = 8)
+    )
+}
+
+a4_width <- 8.27
+# Use A4 width with figure-specific heights (avoid over-stretching panels)
+fig2_height <- 7.2
+fig3_height <- 9.2
+fig4_height <- 10.0
+fig5_height <- 10.2
+
+arrange_with_panel_labels <- function(plot_list, ncol = 1, nrow = NULL) {
+  n_plot <- length(plot_list)
+  if(is.null(nrow)) nrow <- ceiling(n_plot / ncol)
+  ggpubr::ggarrange(
+    plotlist = plot_list,
+    ncol = ncol,
+    nrow = nrow,
+    labels = LETTERS[seq_len(n_plot)],
+    font.label = list(size = 18, face = "bold", family = plot_font_family),
+    hjust = -0.15,
+    vjust = 1.2,
+    align = "hv"
+  )
+}
+
 # Load data
 df_sub <- read.csv("standard_data.csv", stringsAsFactors = FALSE)
 
@@ -209,9 +258,9 @@ create_sig_boxplot <- function(data, y_var, y_label, title) {
     geom_boxplot(width = 0.5, alpha = 0.7, outlier.shape = NA) +
     geom_jitter(width = 0.2, size = 2, alpha = 0.8) +
     annotate("text", x = 1.5, y = y_max * 1.1, label = sig_label, size = 5, fontface = "bold") +
-    geom_segment(aes(x = 1, xend = 2, y = y_max * 1.05, yend = y_max * 1.05), inherit.aes = FALSE) +
+    annotate("segment", x = 1, xend = 2, y = y_max * 1.05, yend = y_max * 1.05) +
     scale_fill_manual(values = c("#3498DB", "#E74C3C")) +
-    theme_classic(base_size = 14) +
+    theme_pub_a4() +
     labs(title = title, y = y_label, x = "") + 
     theme(legend.position = "none", plot.title = element_text(hjust = 0.5, face = "bold"))
 }
@@ -222,9 +271,18 @@ p2 <- create_sig_boxplot(plot_data, "Gross_Spleen_Size_cm", "Size (cm)", "B. Spl
 p3 <- create_sig_boxplot(plot_data, "Gross_Spleen_Weight_g", "Weight (g)", "C. Spleen Weight")
 p4 <- create_sig_boxplot(plot_data, "Ki67_Index", "Ki-67 Index (%)", "D. Ki-67 Index")
 
-# Save boxplots
+# Preserve key quantitative comparison panels for main Figure 2
+p_sig_age <- p1
+p_sig_spleen <- p2
+p_sig_weight <- p3
+p_sig_ki67 <- p4
+
+# Save boxplots and main Figure 2 (A4 portrait)
 combined_box <- grid.arrange(p1, p2, p3, p4, nrow = 2)
+fig2_main <- arrange_with_panel_labels(list(p_sig_age, p_sig_spleen, p_sig_weight, p_sig_ki67), ncol = 2, nrow = 2)
 ggsave("Figure_Boxplots.png", combined_box, width = 10, height = 10, dpi = 300)
+ggsave("figures/Figure_Significant_Comparisons.pdf", fig2_main, width = a4_width, height = fig2_height)
+ggsave("figures/main/Figure2_Significant_Comparisons.pdf", fig2_main, width = a4_width, height = fig2_height)
 
 # B. ROC curve (16 cm cutoff)
 df_roc <- plot_data %>% filter(!is.na(Gross_Spleen_Size_cm))
@@ -233,14 +291,15 @@ roc_obj <- roc(df_roc$outcome, df_roc$Gross_Spleen_Size_cm, levels=c(0, 1), dire
 target_cutoff <- 16.0
 specific_coords <- coords(roc_obj, x = target_cutoff, input = "threshold", ret = c("threshold", "specificity", "sensitivity"), transpose = FALSE)
 
-roc_plot <- ggroc(roc_obj, legacy.axes = TRUE, color="#E74C3C", size=1.5) +
-  theme_classic(base_size = 14) +
+roc_plot <- ggroc(roc_obj, legacy.axes = TRUE, color="#E74C3C", linewidth = 1.1) +
+  theme_pub_a4() +
   annotate("segment", x = 0, xend = 1, y = 0, yend = 1, color="grey60", linetype="dashed") +
   annotate("point", x = 1 - specific_coords$specificity, y = specific_coords$sensitivity, color = "#2C3E50", size = 4, shape=18) +
   annotate("text", x = 0.65, y = 0.25, label = paste0("Cutoff > ", round(specific_coords$threshold, 1), " cm\nSens = ", round(specific_coords$sensitivity*100,1), "%\nSpec = ", round(specific_coords$specificity*100,1), "%"), size = 4, fontface = "bold") +
   labs(title = "ROC: Spleen Size", x = "1 - Specificity", y = "Sensitivity")
 
 ggsave("Figure_ROC.png", roc_plot, width = 6, height = 6, dpi = 300)
+ggsave("figures/Figure_ROC_Spleen_Size.pdf", roc_plot, width = 6.5, height = 6)
 
 # C. Diagnostic scatter plot
 p_scatter <- ggplot(plot_data, aes(x = Gross_Lesion_Size_cm, y = Gross_Spleen_Size_cm)) +
@@ -249,7 +308,7 @@ p_scatter <- ggplot(plot_data, aes(x = Gross_Lesion_Size_cm, y = Gross_Spleen_Si
   geom_point(aes(color = Group, shape = Group), size = 4, alpha = 0.8) +
   geom_hline(yintercept = 16.0, linetype = "solid", color = "black", size = 0.8) +
   scale_color_manual(values = c("#3498DB", "#E74C3C")) +
-  theme_classic(base_size = 14) +
+  theme_pub_a4() +
   labs(title = "Spleen vs Lesion Size", subtitle = "Cutoff > 16.0 cm separates groups", x = "Lesion Size (cm)", y = "Spleen Size (cm)") +
   theme(legend.position = "top", plot.title = element_text(hjust = 0.5, face = "bold"))
 
@@ -278,12 +337,12 @@ p_corr1 <- ggplot(plot_data, aes(x = Imaging_Lesion_Size_cm, y = Gross_Lesion_Si
   # Add correlation coefficient (R and p-value)
   stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top", size = 5) +
   scale_color_manual(values = c("#3498DB", "#E74C3C")) +
-  theme_classic(base_size = 14) +
+  theme_pub_a4() +
   labs(title = "A. Measurement Accuracy",
        subtitle = "Strong correlation validates preoperative imaging",
        x = "Imaging Lesion Size (cm)",
        y = "Gross Pathology Lesion Size (cm)") +
-  theme(legend.position = c(0.85, 0.15),
+  theme(legend.position = "top",
         legend.background = element_rect(fill = "white", color = "black"))
 
 # --- Plot B: Tumor burden effect (lesion size vs spleen size) ---
@@ -298,7 +357,7 @@ p_corr2 <- ggplot(plot_data, aes(x = Gross_Lesion_Size_cm, y = Gross_Spleen_Size
   scale_fill_manual(values = c("#3498DB", "#E74C3C")) +
   # Add group-wise correlation annotations
   stat_cor(aes(color = Group), method = "pearson", label.x.npc = "center", size = 4) +
-  theme_classic(base_size = 14) +
+  theme_pub_a4() +
   labs(title = "B. Tumor Burden Effect",
        subtitle = "SANT shows mass effect; Lymphoma shows diffuse enlargement",
        x = "Lesion Size (cm)",
@@ -307,6 +366,9 @@ p_corr2 <- ggplot(plot_data, aes(x = Gross_Lesion_Size_cm, y = Gross_Spleen_Size
 
 # --- Combine and save ---
 pdf("Figure_Correlations.pdf", width = 12, height = 6)
+grid.arrange(p_corr1, p_corr2, nrow = 1)
+dev.off()
+pdf("figures/Correlation_Plots.pdf", width = 12, height = 6)
 grid.arrange(p_corr1, p_corr2, nrow = 1)
 dev.off()
 
@@ -334,7 +396,9 @@ df_plot$Group <- factor(df_plot$Group, levels=c("SANT", "Splenic Lymphoma"))
 # Define helper for missing-value filling
 fill_missing <- function(x) {
   x <- as.character(x)
-  x[is.na(x) | x == "" | x == "Unknown"] <- "Missing"
+  x_trim <- trimws(x)
+  missing_tokens <- c("", "unknown", "na", "n/a", "nan", "null", "missing")
+  x[is.na(x) | tolower(x_trim) %in% missing_tokens] <- "Missing"
   return(x)
 }
 
@@ -384,6 +448,18 @@ if("US_Blood_Flow_Category" %in% names(df_plot)) {
 
 # --- 5. Define general plotting function ---
 plot_proportion <- function(data, var, title) {
+  # Safety normalization to ensure NA/Missing are unified even after downstream recoding
+  data[[var]] <- fill_missing(data[[var]])
+  
+  # Force Missing to be the bottom segment in stacked bars
+  if(is.factor(data[[var]])) {
+    lv <- levels(data[[var]])
+    lv_non_missing <- lv[lv != "Missing"]
+  } else {
+    lv_non_missing <- sort(unique(data[[var]][data[[var]] != "Missing"]))
+  }
+  data[[var]] <- factor(data[[var]], levels = c("Missing", lv_non_missing))
+  
   # Compute within-group proportions
   plot_data <- data %>%
     group_by(Group, .data[[var]]) %>%
@@ -405,9 +481,9 @@ plot_proportion <- function(data, var, title) {
       "Peripheral" = "#E74C3C", "Central" = "#3498DB", "None/Sparse" = "#95A5A6",
       "Missing" = "grey80"
     )) +
-    theme_classic(base_size = 12) +
+    theme_pub_a4() +
     labs(title = title, x = "", y = "Proportion", fill = "") +
-    theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 11),
+    theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 10),
           legend.position = "right",
           axis.text.x = element_text(face = "bold"))
 }
@@ -433,17 +509,16 @@ if("US_Blood_Flow_Category" %in% names(df_plot)) {
 }
 
 # --- 7. Combine and save ---
+# Figure 3 should include all proportion panels (no supplementary proportion files)
+all_prop_list <- list(p1, p2, p3, p4)
+if(exists("p_ct")) all_prop_list[[length(all_prop_list) + 1]] <- p_ct
+if(exists("p_us")) all_prop_list[[length(all_prop_list) + 1]] <- p_us
 
-# Panel 1: IHC (2x2)
-pdf("figures/Figure_Proportions_IHC.pdf", width = 10, height = 8)
-grid.arrange(p1, p2, p3, p4, nrow = 2)
-dev.off()
-
-# Panel 2: Imaging
-if(length(plot_list_img) > 0) {
-  pdf("figures/Figure_Proportions_Imaging.pdf", width = 12, height = 6)
-  do.call(grid.arrange, c(plot_list_img, nrow = 1))
-  dev.off()
+if(length(all_prop_list) >= 2) {
+  ncol_prop <- 2
+  nrow_prop <- ceiling(length(all_prop_list) / ncol_prop)
+  fig3_main <- arrange_with_panel_labels(all_prop_list, ncol = ncol_prop, nrow = nrow_prop)
+  ggsave("figures/main/Figure3_Key_Proportions.pdf", fig3_main, width = a4_width, height = fig3_height)
 }
 
 # Avoid errors when no graphics device is open
@@ -479,13 +554,6 @@ safe_build_roc <- function(data, var_name) {
   auc_val <- as.numeric(pROC::auc(roc_obj))
   ci_auc <- tryCatch(as.numeric(pROC::ci.auc(roc_obj)), error = function(e) c(NA, NA, NA))
   
-  # Extract ROC points for ggplot
-  roc_df <- data.frame(
-    FPR = 1 - roc_obj$specificities,
-    TPR = roc_obj$sensitivities,
-    Variable = var_name
-  )
-  
   auc_label <- paste0(
     var_name, " (AUC=", round(auc_val, 3),
     if(all(!is.na(ci_auc))) paste0(", 95%CI ", round(ci_auc[1], 3), "-", round(ci_auc[3], 3)) else "",
@@ -494,7 +562,6 @@ safe_build_roc <- function(data, var_name) {
   
   list(
     roc_obj = roc_obj,
-    roc_df = roc_df,
     summary = data.frame(
       Variable = var_name,
       N = nrow(sub),
@@ -511,19 +578,22 @@ roc_res <- lapply(roc_vars, function(v) safe_build_roc(df_extra, v))
 roc_res <- roc_res[!sapply(roc_res, is.null)]
 
 if(length(roc_res) > 0) {
-  roc_curve_df <- bind_rows(lapply(roc_res, function(x) x$roc_df))
   roc_summary <- bind_rows(lapply(roc_res, function(x) x$summary))
-  legend_map <- setNames(
+  legend_labels <- setNames(
     sapply(roc_res, function(x) x$legend_label),
     sapply(roc_res, function(x) x$summary$Variable)
   )
+  roc_list <- setNames(
+    lapply(roc_res, function(x) x$roc_obj),
+    sapply(roc_res, function(x) x$summary$Variable)
+  )
   
-  p_roc_multi <- ggplot(roc_curve_df, aes(x = FPR, y = TPR, color = Variable)) +
-    geom_line(size = 1.2, alpha = 0.9) +
+  # Use ggroc(list) so each ROC is drawn in the correct threshold order
+  p_roc_multi <- ggroc(roc_list, legacy.axes = TRUE, linewidth = 1.1) +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey60") +
-    scale_color_brewer(palette = "Dark2", labels = legend_map) +
+    scale_color_brewer(palette = "Dark2", labels = legend_labels) +
     coord_equal() +
-    theme_classic(base_size = 13) +
+    theme_pub_a4() +
     labs(
       title = "Supplementary Figure A. ROC Comparison Across Continuous Predictors",
       x = "1 - Specificity",
@@ -536,6 +606,7 @@ if(length(roc_res) > 0) {
     )
   
   ggsave("figures/Figure_ROC_Comparison.pdf", p_roc_multi, width = 9, height = 7)
+  ggsave("figures/supplementary/Figure_ROC_Comparison.pdf", p_roc_multi, width = 9, height = 7)
   write.csv(roc_summary[order(-roc_summary$AUC), ], "figures/ROC_Comparison_Summary.csv", row.names = FALSE)
 }
 
@@ -608,7 +679,7 @@ if(nrow(or_res) > 0) {
     scale_y_log10() +
     scale_color_manual(values = c("TRUE" = "#E74C3C", "FALSE" = "#2C3E50"), guide = "none") +
     coord_flip() +
-    theme_classic(base_size = 12) +
+    theme_pub_a4() +
     labs(
       title = "Supplementary Figure B. Odds Ratios for Splenic Lymphoma",
       subtitle = "Univariable Fisher exact test (reference OR=1, clipped for display)",
@@ -620,3 +691,359 @@ if(nrow(or_res) > 0) {
   ggsave("figures/Figure_OR_Forest.pdf", p_or, width = 8, height = 6)
   write.csv(or_res %>% arrange(P), "figures/OR_Forest_Summary.csv", row.names = FALSE)
 }
+
+# ==============================================================================
+# Part 7: Combined Model ROC + Bootstrap Stability
+# ==============================================================================
+
+candidate_predictors <- c("Ki67_Index", "Gross_Spleen_Size_cm", "Age", "Imaging_Lesion_Size_cm", "Gross_Spleen_Weight_g")
+candidate_predictors <- candidate_predictors[candidate_predictors %in% names(df_extra)]
+
+build_model_dataset <- function(data, predictors) {
+  keep_cols <- c("outcome", predictors)
+  sub <- data[complete.cases(data[, keep_cols]), keep_cols, drop = FALSE]
+  if(nrow(sub) < 10) return(NULL)
+  if(length(unique(sub$outcome)) < 2) return(NULL)
+  sub
+}
+
+# Prefer 3-variable combinations, then 2-variable combinations; pick the one with largest usable N
+choose_best_combo <- function(data, candidates, k) {
+  if(length(candidates) < k) return(NULL)
+  combos <- combn(candidates, k, simplify = FALSE)
+  
+  best <- NULL
+  best_n <- -1
+  for(v in combos) {
+    sub <- build_model_dataset(data, v)
+    if(is.null(sub)) next
+    if(nrow(sub) > best_n) {
+      best <- list(vars = v, data = sub)
+      best_n <- nrow(sub)
+    }
+  }
+  best
+}
+
+best3 <- choose_best_combo(df_extra, candidate_predictors, 3)
+best2 <- choose_best_combo(df_extra, candidate_predictors, 2)
+
+model_choice <- if(!is.null(best3)) best3 else best2
+if(!is.null(best3) && !is.null(best2) && nrow(best2$data) > (nrow(best3$data) + 3)) {
+  # If 2-variable model has much better data coverage, prefer robustness over complexity
+  model_choice <- best2
+}
+
+model_vars <- if(!is.null(model_choice)) model_choice$vars else NULL
+model_df <- if(!is.null(model_choice)) model_choice$data else NULL
+
+if(!is.null(model_df)) {
+  model_formula <- as.formula(paste("outcome ~", paste(model_vars, collapse = " + ")))
+  fit_model <- glm(model_formula, data = model_df, family = binomial())
+  
+  pred_prob <- predict(fit_model, type = "response")
+  roc_model <- pROC::roc(model_df$outcome, pred_prob, levels = c(0, 1), direction = "<", quiet = TRUE)
+  auc_model <- as.numeric(pROC::auc(roc_model))
+  ci_model <- tryCatch(as.numeric(pROC::ci.auc(roc_model)), error = function(e) c(NA, NA, NA))
+  model_coords <- tryCatch(
+    pROC::coords(
+      roc_model,
+      x = "best",
+      best.method = "youden",
+      ret = c("threshold", "specificity", "sensitivity"),
+      transpose = FALSE
+    ),
+    error = function(e) NULL
+  )
+  
+  p_model_roc <- ggroc(roc_model, legacy.axes = TRUE, color = "#8E44AD", linewidth = 1.2) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey60") +
+    coord_equal() +
+    theme_pub_a4() +
+    labs(
+      title = "Supplementary Figure C. Combined Model ROC",
+      subtitle = paste0(
+        "Predictors: ", paste(model_vars, collapse = " + "), 
+        " | AUC=", round(auc_model, 3),
+        if(all(!is.na(ci_model))) paste0(" (95%CI ", round(ci_model[1], 3), "-", round(ci_model[3], 3), ")") else ""
+      ),
+      x = "1 - Specificity",
+      y = "Sensitivity"
+    ) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+  
+  if(!is.null(model_coords)) {
+    p_model_roc <- p_model_roc +
+      annotate(
+        "point",
+        x = 1 - model_coords$specificity,
+        y = model_coords$sensitivity,
+        color = "#2C3E50",
+        size = 3.5,
+        shape = 18
+      ) +
+      annotate(
+        "text",
+        x = 0.62,
+        y = 0.22,
+        label = paste0(
+          "Cutoff > ", round(model_coords$threshold, 3),
+          "\nSens = ", round(model_coords$sensitivity * 100, 1), "%",
+          "\nSpec = ", round(model_coords$specificity * 100, 1), "%"
+        ),
+        size = 2.8,
+        fontface = "bold"
+      )
+  }
+  
+  ggsave("figures/Figure_ROC_Combined_Model.pdf", p_model_roc, width = 7, height = 6)
+  
+  # Bootstrap robustness: refit on bootstrap sample and evaluate AUC on original modeling set
+  set.seed(20260317)
+  n_boot <- 1000
+  auc_boot <- rep(NA_real_, n_boot)
+  n_model <- nrow(model_df)
+  
+  for(i in seq_len(n_boot)) {
+    idx <- sample(seq_len(n_model), size = n_model, replace = TRUE)
+    boot_df <- model_df[idx, , drop = FALSE]
+    
+    if(length(unique(boot_df$outcome)) < 2) next
+    
+    fit_boot <- tryCatch(glm(model_formula, data = boot_df, family = binomial()), error = function(e) NULL)
+    if(is.null(fit_boot)) next
+    
+    pred_boot_on_orig <- tryCatch(predict(fit_boot, newdata = model_df, type = "response"), error = function(e) NULL)
+    if(is.null(pred_boot_on_orig)) next
+    
+    roc_boot <- tryCatch(pROC::roc(model_df$outcome, pred_boot_on_orig, levels = c(0, 1), direction = "<", quiet = TRUE), error = function(e) NULL)
+    if(is.null(roc_boot)) next
+    
+    auc_boot[i] <- as.numeric(pROC::auc(roc_boot))
+  }
+  
+  auc_boot <- auc_boot[!is.na(auc_boot)]
+  if(length(auc_boot) > 50) {
+    boot_summary <- data.frame(
+      Metric = c("Apparent_AUC", "Bootstrap_Median", "Bootstrap_CI_L", "Bootstrap_CI_U", "Bootstrap_Valid_N"),
+      Value = c(
+        auc_model,
+        median(auc_boot),
+        quantile(auc_boot, 0.025),
+        quantile(auc_boot, 0.975),
+        length(auc_boot)
+      ),
+      stringsAsFactors = FALSE
+    )
+    
+    boot_df_plot <- data.frame(AUC = auc_boot)
+    p_boot <- ggplot(boot_df_plot, aes(x = AUC)) +
+      geom_histogram(bins = 30, fill = "#3498DB", color = "white", alpha = 0.85) +
+      geom_vline(xintercept = auc_model, color = "#E74C3C", linetype = "dashed", linewidth = 1) +
+      geom_vline(xintercept = quantile(auc_boot, c(0.025, 0.975)), color = "#2C3E50", linetype = "dotted", linewidth = 0.9) +
+      theme_pub_a4() +
+      labs(
+        title = "Supplementary Figure D. Bootstrap AUC Stability",
+        subtitle = paste0(
+          "n=", n_model, ", bootstrap=", length(auc_boot),
+          " | median AUC=", round(median(auc_boot), 3),
+          ", 95% percentile CI=", round(quantile(auc_boot, 0.025), 3), "-", round(quantile(auc_boot, 0.975), 3)
+        ),
+        x = "AUC (bootstrap-refit model on original dataset)",
+        y = "Count"
+      ) +
+      theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+    
+    ggsave("figures/Figure_Bootstrap_AUC_Stability.pdf", p_boot, width = 8, height = 6)
+    ggsave("figures/supplementary/Figure_Bootstrap_AUC_Stability.pdf", p_boot, width = 8, height = 6)
+    write.csv(boot_summary, "figures/Bootstrap_AUC_Summary.csv", row.names = FALSE)
+  }
+}
+
+# ==============================================================================
+# Part 8: Final layout exports (Main vs Supplementary)
+# ==============================================================================
+
+# Figure 4 (main): diagnostic framework in portrait A4
+if(exists("p_model_roc")) {
+  p4a_main <- p_corr1 +
+    theme_pub_a4() +
+    theme(legend.position = "top") +
+    labs(
+      title = "Measurement Correlation",
+      subtitle = "Imaging lesion size vs gross pathology size"
+    )
+  
+  p4b_main <- roc_plot +
+    theme_pub_a4() +
+    labs(
+      title = "Single-Marker ROC",
+      subtitle = "Spleen size with 16 cm clinical cutoff"
+    )
+  
+  p4c_main <- p_model_roc +
+    theme_pub_a4() +
+    labs(
+      title = "Combined-Model ROC",
+      subtitle = paste0("Predictors: ", paste(model_vars, collapse = " + "))
+    )
+  
+  fig4_main <- arrange_with_panel_labels(list(p4a_main, p4b_main, p4c_main), ncol = 1, nrow = 3)
+  ggsave("figures/main/Figure4_Diagnostic_Framework.pdf", fig4_main, width = a4_width, height = fig4_height)
+}
+
+# ==============================================================================
+# Part 9: Figure 5 (Nomogram + Calibration + DCA)
+# ==============================================================================
+if(exists("fit_model") && !is.null(model_df) && !is.null(model_vars)) {
+  # Panel A: points-based nomogram representation
+  coef_vec <- coef(fit_model)[model_vars]
+  coef_abs <- abs(coef_vec)
+  if(max(coef_abs, na.rm = TRUE) == 0) coef_abs <- rep(1, length(coef_abs))
+  
+  nom_df <- do.call(rbind, lapply(model_vars, function(v) {
+    rng <- range(model_df[[v]], na.rm = TRUE)
+    beta <- unname(coef_vec[v])
+    max_pts <- abs(beta) * abs(diff(rng))
+    data.frame(
+      Variable = v,
+      MinValue = rng[1],
+      MaxValue = rng[2],
+      MaxPoints = max_pts,
+      stringsAsFactors = FALSE
+    )
+  }))
+  
+  if(max(nom_df$MaxPoints, na.rm = TRUE) > 0) {
+    nom_df$MaxPoints <- 100 * nom_df$MaxPoints / max(nom_df$MaxPoints, na.rm = TRUE)
+  }
+  nom_df$Variable <- factor(nom_df$Variable, levels = rev(nom_df$Variable))
+  
+  p5a_nomogram <- ggplot(nom_df, aes(y = Variable)) +
+    geom_segment(aes(x = 0, xend = 1, yend = Variable), linewidth = 0.8, color = "#2C3E50") +
+    geom_text(aes(x = -0.05, label = sprintf("min %.2f", MinValue)), hjust = 1, size = 2.6, family = plot_font_family) +
+    geom_text(aes(x = 1.05, label = sprintf("max %.2f", MaxValue)), hjust = 0, size = 2.6, family = plot_font_family) +
+    geom_point(aes(x = 0.5, size = MaxPoints), color = "#8E44AD", alpha = 0.85) +
+    geom_text(aes(x = 0.5, label = paste0(round(MaxPoints, 1), " pts")), vjust = -1.2, size = 2.5, family = plot_font_family) +
+    scale_size_continuous(range = c(2.5, 7), guide = "none") +
+    coord_cartesian(xlim = c(-0.25, 1.25)) +
+    theme_pub_a4() +
+    labs(
+      title = "Nomogram Representation",
+      subtitle = "Predictor contribution scaled to 0-100 points",
+      x = "Predictor range",
+      y = ""
+    )
+  
+  # Panel B: bootstrap calibration
+  pred_app <- predict(fit_model, type = "response")
+  obs_app <- model_df$outcome
+  grid_prob <- seq(0.01, 0.99, by = 0.01)
+  
+  lo_app <- loess(obs_app ~ pred_app, span = 0.75, degree = 1)
+  cal_app <- pmin(pmax(predict(lo_app, newdata = data.frame(pred_app = grid_prob)), 0), 1)
+  
+  n_boot_cal <- 300
+  optimism_mat <- matrix(NA_real_, nrow = n_boot_cal, ncol = length(grid_prob))
+  for(b in seq_len(n_boot_cal)) {
+    idx <- sample(seq_len(nrow(model_df)), size = nrow(model_df), replace = TRUE)
+    boot_df <- model_df[idx, , drop = FALSE]
+    if(length(unique(boot_df$outcome)) < 2) next
+    
+    fit_b <- tryCatch(glm(model_formula, data = boot_df, family = binomial()), error = function(e) NULL)
+    if(is.null(fit_b)) next
+    
+    p_boot <- tryCatch(predict(fit_b, newdata = boot_df, type = "response"), error = function(e) NULL)
+    p_test <- tryCatch(predict(fit_b, newdata = model_df, type = "response"), error = function(e) NULL)
+    if(is.null(p_boot) || is.null(p_test)) next
+    
+    lo_boot <- tryCatch(loess(boot_df$outcome ~ p_boot, span = 0.75, degree = 1), error = function(e) NULL)
+    lo_test <- tryCatch(loess(model_df$outcome ~ p_test, span = 0.75, degree = 1), error = function(e) NULL)
+    if(is.null(lo_boot) || is.null(lo_test)) next
+    
+    curve_boot <- pmin(pmax(predict(lo_boot, newdata = data.frame(p_boot = grid_prob)), 0), 1)
+    curve_test <- pmin(pmax(predict(lo_test, newdata = data.frame(p_test = grid_prob)), 0), 1)
+    optimism_mat[b, ] <- curve_boot - curve_test
+  }
+  
+  optimism_mean <- colMeans(optimism_mat, na.rm = TRUE)
+  optimism_mean[is.na(optimism_mean)] <- 0
+  cal_corrected <- pmin(pmax(cal_app - optimism_mean, 0), 1)
+  
+  cal_df <- data.frame(
+    Predicted = rep(grid_prob, 3),
+    Observed = c(grid_prob, cal_app, cal_corrected),
+    Curve = rep(c("Ideal", "Apparent", "Bias-corrected"), each = length(grid_prob)),
+    stringsAsFactors = FALSE
+  )
+  
+  p5b_cal <- ggplot(cal_df, aes(x = Predicted, y = Observed, color = Curve, linetype = Curve)) +
+    geom_line(linewidth = 0.9) +
+    scale_color_manual(values = c("Ideal" = "grey45", "Apparent" = "#E74C3C", "Bias-corrected" = "#2C3E50")) +
+    theme_pub_a4() +
+    coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
+    labs(
+      title = "Calibration",
+      subtitle = "Bootstrap-corrected calibration curve",
+      x = "Predicted probability",
+      y = "Observed probability",
+      color = "",
+      linetype = ""
+    )
+  
+  # Panel C: decision curve analysis
+  thresh <- seq(0.05, 0.95, by = 0.01)
+  n_obs <- nrow(model_df)
+  prev <- mean(model_df$outcome)
+  pred_model <- pred_app
+  
+  nb_model <- sapply(thresh, function(t) {
+    pred_pos <- pred_model >= t
+    tp <- sum(pred_pos & model_df$outcome == 1)
+    fp <- sum(pred_pos & model_df$outcome == 0)
+    (tp / n_obs) - (fp / n_obs) * (t / (1 - t))
+  })
+  nb_all <- prev - (1 - prev) * (thresh / (1 - thresh))
+  nb_none <- rep(0, length(thresh))
+  
+  dca_df <- data.frame(
+    Threshold = rep(thresh, 3),
+    NetBenefit = c(nb_model, nb_all, nb_none),
+    Strategy = rep(c("Model", "Treat-all", "Treat-none"), each = length(thresh)),
+    stringsAsFactors = FALSE
+  )
+  
+  p5c_dca <- ggplot(dca_df, aes(x = Threshold, y = NetBenefit, color = Strategy, linetype = Strategy)) +
+    geom_line(linewidth = 0.9) +
+    scale_color_manual(values = c("Model" = "#8E44AD", "Treat-all" = "#E67E22", "Treat-none" = "grey45")) +
+    theme_pub_a4() +
+    labs(
+      title = "Decision Curve Analysis",
+      subtitle = "Net benefit across threshold probabilities",
+      x = "Threshold probability",
+      y = "Net benefit",
+      color = "",
+      linetype = ""
+    )
+  
+  fig5_main <- arrange_with_panel_labels(list(p5a_nomogram, p5b_cal, p5c_dca), ncol = 1, nrow = 3)
+  ggsave("figures/main/Figure5_Clinical_Utility.pdf", fig5_main, width = a4_width, height = fig5_height)
+}
+
+# Writing guidance file to align legend style and result flow
+layout_notes <- c(
+  "Main Figure Sequence Recommendation",
+  "Figure 1: Representative imaging cases (clinical phenotype).",
+  "Figure 2: Significant comparisons (age, spleen size, spleen weight, Ki-67).",
+  "Figure 3: Unified feature proportions (all proportion panels; Missing/NA harmonized).",
+  "Figure 4: Diagnostic framework = measurement correlation + spleen-size ROC + combined-model ROC.",
+  "Figure 5: Clinical utility = nomogram + calibration + decision curve analysis.",
+  "",
+  "Supplementary Figures",
+  "S1: ROC comparison across continuous predictors.",
+  "S2: Bootstrap AUC stability for combined model.",
+  "",
+  "Results paragraph order",
+  "1) Qualitative imaging distinction -> 2) quantitative group differences -> 3) diagnostic model performance -> 4) clinical utility -> 5) robustness (supplementary)."
+)
+writeLines(layout_notes, "figures/main/Figure_Layout_and_Legend_Notes.txt")
